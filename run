@@ -1,0 +1,15 @@
+#!/bin/bash
+# 5gs6fiofosbq45j6rf2truj3lgaqzinhgyspqsycnto67qfk4psep2yd.onion
+
+export TARGET_ONION="6k3xtngfe2xndqsghcxaim4iukexamojpgyevwphhep5g55xgayufvqd.onion"
+docker compose up --build -d
+
+# aguarda o Tor inicializar e criar o arquivo hostname
+echo "aguardando Tor gerar o endereço .onion..."
+until docker compose exec proxy test -f /var/lib/tor/proxy_hidden_service/hostname 2>/dev/null; do
+  sleep 2
+done
+
+# obter o .onion público do proxy:
+echo "endereço público do proxy:"
+docker compose exec proxy cat /var/lib/tor/proxy_hidden_service/hostname

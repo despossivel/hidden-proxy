@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  proxy:
+    build: .
+    environment:
+      # endereço .onion da aplicação real — nunca exposto ao usuário
+      - TARGET_ONION=${TARGET_ONION}
+      - LISTEN_ADDR=:8080
+      - TOR_SOCKS=127.0.0.1:9050
+    volumes:
+      # persiste o endereço .onion do proxy entre restarts
+      - tor_proxy_data:/var/lib/tor/proxy_hidden_service
+    restart: unless-stopped
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  tor_proxy_data:
+  redis_data:
