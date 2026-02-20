@@ -1,15 +1,32 @@
 #!/bin/bash
-# 5gs6fiofosbq45j6rf2truj3lgaqzinhgyspqsycnto67qfk4psep2yd.onion
+# ─── Decentralized Proxy — Tor onion-to-onion reverse proxy ───────
+# Auto-detects the environment and runs the correct script.
+#
+# Usage:
+#   ./run              # auto-detect (arm* → prod, x86 → dev)
+#   ./run dev          # force dev mode
+#   ./run prod         # force prod mode
+#   REDIS=1 ./run      # with Redis
 
-export TARGET_ONION="6k3xtngfe2xndqsghcxaim4iukexamojpgyevwphhep5g55xgayufvqd.onion"
-docker compose up --build -d
+set -e
 
-# aguarda o Tor inicializar e criar o arquivo hostname
-echo "aguardando Tor gerar o endereço .onion..."
-until docker compose exec proxy test -f /var/lib/tor/proxy_hidden_service/hostname 2>/dev/null; do
-  sleep 2
-done
+MODE="${1:-auto}"
+ARCH=$(uname -m)
 
-# obter o .onion público do proxy:
-echo "endereço público do proxy:"
-docker compose exec proxy cat /var/lib/tor/proxy_hidden_service/hostname
+if [ "$MODE" = "auto" ]; then
+  case "$ARCH" in
+    aarch64|armv7l|armv6l) MODE="prod" ;;
+    *)                     MODE="dev"  ;;
+  esac
+fi
+
+echo "▶ selected mode: $MODE  (arch: $ARCH)"
+echo ""
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ "$MODE" = "prod" ]; then
+  exec "$DIR/run-prod"
+else
+  exec "$DIR/run-dev"
+fi

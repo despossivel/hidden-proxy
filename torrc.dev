@@ -1,0 +1,10 @@
+# ── Tor config: DEVELOPMENT ──────────────────────────────────────────
+# No resource restrictions. Default circuit pool.
+
+SocksPort 9050
+HiddenServiceDir /var/lib/tor/proxy_hidden_service/
+HiddenServicePort 80 127.0.0.1:8080
+
+# Client only, do not act as relay/exit.
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy reject *

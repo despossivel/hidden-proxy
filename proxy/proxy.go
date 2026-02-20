@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,14 +32,28 @@ type ReverseProxy struct {
 func New(targetOnion, proxyOnion, socksAddr string) (*ReverseProxy, error) {
 	client, err := torClient.NewHTTPClient(socksAddr)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao criar cliente tor: %w", err)
+		return nil, fmt.Errorf("failed to create tor client: %w", err)
+	}
+
+	// Cache size & TTL configurable via env for resource-constrained devices.
+	cacheBytes := int64(10 * 1024 * 1024) // default 10 MB (RPi-friendly)
+	if v := os.Getenv("CACHE_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cacheBytes = n
+		}
+	}
+	cacheTTL := 60 * time.Second
+	if v := os.Getenv("CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cacheTTL = d
+		}
 	}
 
 	return &ReverseProxy{
 		targetOnion: strings.TrimRight(targetOnion, "/"),
 		proxyOnion:  strings.TrimRight(proxyOnion, "/"),
 		client:      client,
-		cache:       newResponseCache(50*1024*1024, 30*time.Second), // 50MB, 30s TTL
+		cache:       newResponseCache(cacheBytes, cacheTTL),
 	}, nil
 }
 
@@ -60,32 +75,32 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			w.WriteHeader(ent.status)
 			_, _ = w.Write(ent.body)
-			log.Printf("CACHE %s %s → %d (%d bytes) em %v", r.Method, r.RequestURI, ent.status, len(ent.body), time.Since(start))
+			log.Printf("CACHE %s %s → %d (%d bytes) in %v", r.Method, r.RequestURI, ent.status, len(ent.body), time.Since(start))
 			return
 		}
 	}
 
-	// responde preflight CORS imediatamente sem repassar para a app
+	// respond to CORS preflight immediately without forwarding to the app
 	if r.Method == http.MethodOptions {
 		p.setCORSHeaders(w.Header(), r)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// monta a URL de destino — substitui o host pelo .onion real da app
+	// build the target URL — replace the host with the real app .onion
 	targetURL := fmt.Sprintf("http://%s%s", p.targetOnion, r.RequestURI)
 
-	// cria a requisição para a aplicação
+	// create the request to the upstream app
 	outReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
-		http.Error(w, "erro ao criar requisição", http.StatusInternalServerError)
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
 
-	// copia os headers originais
+	// copy original headers
 	copyHeaders(outReq.Header, r.Header)
 
-	// remove headers que poderiam expor informações do proxy
+	// remove headers that could expose proxy information
 	outReq.Header.Del("X-Forwarded-For")
 	outReq.Header.Del("X-Real-IP")
 	outReq.Header.Set("Host", p.targetOnion)
@@ -94,16 +109,16 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// search and replace target onion references in the body.
 	outReq.Header.Set("Accept-Encoding", "identity")
 
-	// faz a requisição para a aplicação via Tor
+	// forward the request to the app via Tor
 	resp, err := p.client.Do(outReq)
 	if err != nil {
-		log.Printf("erro ao contatar aplicação: %v", err)
-		http.Error(w, "aplicação indisponível", http.StatusBadGateway)
+		log.Printf("failed to contact upstream app: %v", err)
+		http.Error(w, "upstream app unavailable", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// copia headers da resposta, reescrevendo Location para não vazar .onion da app
+	// copy response headers, rewriting Location to avoid leaking the app's .onion
 	copyHeaders(w.Header(), resp.Header)
 	if p.proxyOnion != "" {
 		p.rewriteLocationHeader(w.Header())
@@ -119,26 +134,27 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Content-Encoding")
 	w.Header().Del("Content-Length") // will be recalculated
 
-	// reescreve body de respostas textuais para substituir referências ao .onion da app
+	// rewrite textual response bodies to replace references to the app's .onion
 	contentType := resp.Header.Get("Content-Type")
 	shouldRewrite := p.proxyOnion != "" && isTextualContentType(contentType)
 
 	var written int64
 	if shouldRewrite {
 		// avoid rewriting very large bodies — stream them instead
-		const maxRewriteSize = 5 * 1024 * 1024 // 5 MB
+		// 2 MB cap keeps peak RSS low on RPi (was 5 MB)
+		const maxRewriteSize = 2 * 1024 * 1024 // 2 MB
 		if resp.ContentLength > maxRewriteSize && resp.ContentLength > 0 {
 			w.WriteHeader(resp.StatusCode)
 			var err error
 			written, err = io.Copy(w, resp.Body)
 			if err != nil {
-				log.Printf("erro ao transmitir resposta grande: %v", err)
+				log.Printf("error streaming large response: %v", err)
 			}
 		} else {
 			// read body, decompressing if upstream ignored our identity request
 			body, err := readResponseBody(resp.Body, upstreamEnc)
 			if err != nil {
-				log.Printf("erro ao ler body: %v", err)
+				log.Printf("error reading body: %v", err)
 				w.WriteHeader(http.StatusBadGateway)
 			} else {
 				// rewrite target onion → proxy onion
@@ -154,7 +170,9 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				clientAcceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
 				if clientAcceptsGzip && len(body) > 256 {
 					var buf bytes.Buffer
-					gz := gzip.NewWriter(&buf)
+					// BestSpeed (level 1) → 3-5x less CPU than default, ~10 % bigger output.
+					// On RPi this matters more than bandwidth.
+					gz, _ := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
 					_, _ = gz.Write(body)
 					_ = gz.Close()
 					w.Header().Set("Content-Encoding", "gzip")
@@ -183,24 +201,24 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var err error
 		written, err = io.Copy(w, resp.Body)
 		if err != nil {
-			log.Printf("erro ao transmitir resposta: %v", err)
+			log.Printf("error streaming response: %v", err)
 		}
 	}
 
-	log.Printf("%s %s → %d (%d bytes) em %v",
+	log.Printf("%s %s → %d (%d bytes) in %v",
 		r.Method, r.RequestURI, resp.StatusCode, written, time.Since(start))
 }
 
-// setCORSHeaders injeta os headers CORS corretos, usando o .onion do proxy como origem permitida.
+// setCORSHeaders injects the correct CORS headers, using the proxy .onion as the allowed origin.
 func (p *ReverseProxy) setCORSHeaders(h http.Header, r *http.Request) {
 	proxyOrigin := "http://" + p.proxyOnion
 
-	// permite apenas a origem do proxy; substitui qualquer valor vindo da app
+	// allow only the proxy origin; replaces any value coming from the app
 	h.Set("Access-Control-Allow-Origin", proxyOrigin)
 	h.Set("Access-Control-Allow-Credentials", "true")
 	h.Set("Vary", "Origin")
 
-	// em preflight, ecoa os métodos e headers pedidos
+	// on preflight, echo back the requested methods and headers
 	if r.Method == http.MethodOptions {
 		reqMethod := r.Header.Get("Access-Control-Request-Method")
 		if reqMethod == "" {
@@ -218,7 +236,7 @@ func (p *ReverseProxy) setCORSHeaders(h http.Header, r *http.Request) {
 	}
 }
 
-// rewriteLocationHeader substitui o host do .onion da app pelo .onion do proxy nos headers Location e Refresh.
+// rewriteLocationHeader replaces the app .onion host with the proxy .onion in Location and Refresh headers.
 func (p *ReverseProxy) rewriteLocationHeader(h http.Header) {
 	for _, key := range []string{"Location", "Refresh", "Content-Location"} {
 		if val := h.Get(key); val != "" {
@@ -227,7 +245,7 @@ func (p *ReverseProxy) rewriteLocationHeader(h http.Header) {
 	}
 }
 
-// rewriteBody substitui todas as ocorrências do .onion da app pelo .onion do proxy.
+// rewriteBody replaces all occurrences of the app .onion with the proxy .onion.
 func (p *ReverseProxy) rewriteBody(body []byte) []byte {
 	return bytes.ReplaceAll(body, []byte(p.targetOnion), []byte(p.proxyOnion))
 }
@@ -544,7 +562,7 @@ func cloneHeader(h http.Header) http.Header {
 }
 
 func copyHeaders(dst, src http.Header) {
-	// não copiar Content-Length quando o body pode ser reescrito (será recalculado)
+	// skip Content-Length since the body may be rewritten (will be recalculated)
 	src.Del("Content-Length")
 	for key, values := range src {
 		for _, value := range values {

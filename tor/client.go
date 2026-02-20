@@ -7,30 +7,33 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// NewHTTPClient cria um cliente HTTP que roteia todo tráfego
-// pelo SOCKS5 do Tor — permitindo resolver endereços .onion
+// NewHTTPClient creates an HTTP client that routes all traffic
+// through Tor's SOCKS5 — enabling .onion address resolution
 func NewHTTPClient(socksAddr string) (*http.Client, error) {
 	dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, proxy.Direct)
 	if err != nil {
 		return nil, err
 	}
 
+	// Pool sizes tuned for low-memory devices (RPi 4).
+	// 20 idle conns uses ~2 MB vs 100 → ~10 MB.
 	transport := &http.Transport{
 		Dial:                  dialer.Dial,
 		DisableKeepAlives:     false,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		// Tor over SOCKS doesn't support HTTP/2 well; prefer HTTP/1.x
-		ForceAttemptHTTP2: false,
+		WriteBufferSize:       4096, // 4 KB (default 4 KB) — keep small
+		ReadBufferSize:        8192, // 8 KB — enough for headers
+		ForceAttemptHTTP2:     false,
 	}
 
 	return &http.Client{
 		Transport: transport,
 		Timeout:   120 * time.Second,
-		// não seguir redirects automaticamente — deixar o cliente decidir
+		// do not follow redirects automatically — let the client decide
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

@@ -5,13 +5,13 @@ import (
 )
 
 type Config struct {
-	// endereço .onion da aplicação real (mantido em segredo)
+	// .onion address of the real app (kept secret)
 	TargetOnion string
-	// endereço .onion público do proxy (usado para reescrever redirects)
+	// public .onion address of the proxy (used to rewrite redirects)
 	ProxyOnion string
-	// porta interna onde o proxy escuta
+	// internal port where the proxy listens
 	ListenAddr string
-	// endereço do SOCKS5 do Tor
+	// Tor SOCKS5 address
 	TorSOCKS string
 }
 

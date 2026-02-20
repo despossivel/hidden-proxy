@@ -1,0 +1,48 @@
+#!/bin/bash
+# ─── run-dev: Development environment (x86_64 / Apple Silicon) ───────
+# More cache, more RAM, no container resource limits.
+#
+# Usage:
+#   ./run-dev                    # without Redis
+#   REDIS=1 ./run-dev            # with Redis
+
+set -e
+
+export TARGET_ONION="${TARGET_ONION:-6k3xtngfe2xndqsghcxaim4iukexamojpgyevwphhep5g55xgayufvqd.onion}"
+
+echo "═══════════════════════════════════════════════"
+echo "  DECENTRALIZED PROXY — DEV mode"
+echo "  arch: $(uname -m)"
+echo "═══════════════════════════════════════════════"
+
+COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
+PROFILES=""
+
+if [ "${REDIS:-0}" = "1" ]; then
+  export REDIS_ADDR="redis:6379"
+  PROFILES="--profile with-redis"
+  echo "▶ Redis: enabled (256 MB)"
+else
+  export REDIS_ADDR=""
+  echo "▶ Redis: disabled (set REDIS=1 to enable)"
+fi
+
+echo "▶ Cache: 50 MB  |  TTL: 30s"
+echo "▶ GOMEMLIMIT: 512 MiB  |  GOMAXPROCS: 4"
+echo ""
+
+export CACHE_MAX_BYTES=52428800
+export CACHE_TTL=30s
+export GOMEMLIMIT=512MiB
+export GOMAXPROCS=4
+
+docker compose $COMPOSE_FILES $PROFILES up --build -d
+
+echo "waiting for Tor to generate .onion address..."
+until docker compose exec proxy test -f /var/lib/tor/proxy_hidden_service/hostname 2>/dev/null; do
+  sleep 2
+done
+
+echo ""
+echo "public proxy address:"
+docker compose exec proxy cat /var/lib/tor/proxy_hidden_service/hostname

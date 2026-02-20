@@ -1,0 +1,8 @@
+.git
+*.md
+run
+run-dev
+run-prod
+docker-compose*.yml
+Dockerfile*
+.dockerignore

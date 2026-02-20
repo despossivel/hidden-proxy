@@ -1,0 +1,19 @@
+# ── Tor config: PRODUCTION (Raspberry Pi / low-resource) ────────────
+# Circuits reused longer, less padding, lower RAM usage.
+
+SocksPort 9050
+HiddenServiceDir /var/lib/tor/proxy_hidden_service/
+HiddenServicePort 80 127.0.0.1:8080
+
+# Reuse circuits for 10 min (saves CPU/RAM by creating fewer).
+MaxCircuitDirtiness 600
+CircuitBuildTimeout 30
+LearnCircuitBuildTimeout 0
+
+# Fewer connections = less RAM (~1-2 MB per circuit).
+ConnectionPadding 0
+ReducedConnectionPadding 1
+
+# Client only, do not act as relay/exit.
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy reject *

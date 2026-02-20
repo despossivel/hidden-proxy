@@ -1,0 +1,49 @@
+#!/bin/bash
+# ─── run-prod: Raspberry Pi 4 / ARM micro-computers ────────────────
+# Small cache, RAM/CPU limits, Tor low-resource.
+#
+# Usage:
+#   ./run-prod                   # without Redis (minimal RAM)
+#   REDIS=1 ./run-prod           # with Redis (64 MB limit)
+
+set -e
+
+export TARGET_ONION="${TARGET_ONION:-6k3xtngfe2xndqsghcxaim4iukexamojpgyevwphhep5g55xgayufvqd.onion}"
+
+echo "═══════════════════════════════════════════════"
+echo "  DECENTRALIZED PROXY — PROD mode (RPi)"
+echo "  arch: $(uname -m)"
+echo "═══════════════════════════════════════════════"
+
+COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
+PROFILES=""
+
+if [ "${REDIS:-0}" = "1" ]; then
+  export REDIS_ADDR="redis:6379"
+  PROFILES="--profile with-redis"
+  echo "▶ Redis: enabled (64 MB max)"
+else
+  export REDIS_ADDR=""
+  echo "▶ Redis: disabled (set REDIS=1 to enable)"
+fi
+
+echo "▶ Cache: 10 MB  |  TTL: 60s"
+echo "▶ GOMEMLIMIT: 200 MiB  |  GOMAXPROCS: 2"
+echo "▶ Container limit: 384 MB RAM / 2 CPUs"
+echo ""
+
+export CACHE_MAX_BYTES=10485760
+export CACHE_TTL=60s
+export GOMEMLIMIT=200MiB
+export GOMAXPROCS=2
+
+docker compose $COMPOSE_FILES $PROFILES up --build -d
+
+echo "waiting for Tor to generate .onion address..."
+until docker compose exec proxy test -f /var/lib/tor/proxy_hidden_service/hostname 2>/dev/null; do
+  sleep 2
+done
+
+echo ""
+echo "public proxy address:"
+docker compose exec proxy cat /var/lib/tor/proxy_hidden_service/hostname

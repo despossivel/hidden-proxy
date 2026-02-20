@@ -1,0 +1,29 @@
+# ─── DEV overlay (x86_64 / native Apple Silicon) ──────────────────
+# More RAM, more cache, more connections. No hard resource limits.
+# Usage: ./run-dev
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - GOMEMLIMIT=512MiB
+      - GOMAXPROCS=4
+      - CACHE_MAX_BYTES=52428800   # 50 MB
+      - CACHE_TTL=30s
+    # No deploy.resources → uses all host resources.
+    # Default Tor config (no circuit restrictions).
+    volumes:
+      - tor_proxy_data:/var/lib/tor/proxy_hidden_service
+
+  redis:
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru

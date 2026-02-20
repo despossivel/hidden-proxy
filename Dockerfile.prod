@@ -1,4 +1,4 @@
-# ── Build stage (development / x86_64 / Apple Silicon) ──────────────
+# ── Build stage (RPi / ARM production) ───────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
 
 ARG TARGETOS=linux
@@ -12,7 +12,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w" -trimpath -o /tmp/proxy-bin .
 
-# ── Runtime stage (dev — larger pool, no Tor restrictions) ──────────
+# ── Runtime stage (minimal, RPi-tuned) ──────────────────────────────
 FROM alpine:3.19
 
 RUN apk add --no-cache tor ca-certificates \
@@ -20,7 +20,7 @@ RUN apk add --no-cache tor ca-certificates \
 
 WORKDIR /app
 COPY --from=builder /tmp/proxy-bin ./proxy
-COPY torrc.dev /etc/tor/torrc
+COPY torrc.prod /etc/tor/torrc
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 

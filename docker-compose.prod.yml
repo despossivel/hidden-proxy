@@ -1,0 +1,38 @@
+# ─── PROD overlay (Raspberry Pi 4 / ARM micro-computers) ───────────
+# Hard RAM and CPU limits. Small cache. Fast gzip.
+# Usage: ./run-prod
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    environment:
+      - GOMEMLIMIT=200MiB
+      - GOMAXPROCS=2
+      - CACHE_MAX_BYTES=10485760   # 10 MB
+      - CACHE_TTL=60s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '2'
+        reservations:
+          memory: 128M
+          cpus: '0.5'
+
+  redis:
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+          cpus: '0.5'

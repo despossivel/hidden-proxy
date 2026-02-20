@@ -1,25 +1,37 @@
-version: '3.8'
+# ─── Base compose — shared between dev and prod ─────────────────────
+# Usage:
+#   DEV:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   PROD: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#
+# Or simply:  ./run-dev  |  ./run-prod
 
 services:
   proxy:
-    build: .
+    build:
+      context: .
     environment:
-      # endereço .onion da aplicação real — nunca exposto ao usuário
       - TARGET_ONION=${TARGET_ONION}
       - LISTEN_ADDR=:8080
       - TOR_SOCKS=127.0.0.1:9050
+      - REDIS_ADDR=${REDIS_ADDR:-}
+      - CACHE_MAX_BYTES=${CACHE_MAX_BYTES:-10485760}
+      - CACHE_TTL=${CACHE_TTL:-60s}
+      - GOMEMLIMIT=${GOMEMLIMIT:-200MiB}
+      - GOMAXPROCS=${GOMAXPROCS:-2}
     volumes:
-      # persiste o endereço .onion do proxy entre restarts
       - tor_proxy_data:/var/lib/tor/proxy_hidden_service
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+        required: false
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "60", "1"]
     volumes:
       - redis_data:/data
+    profiles:
+      - with-redis
 
 volumes:
   tor_proxy_data:
